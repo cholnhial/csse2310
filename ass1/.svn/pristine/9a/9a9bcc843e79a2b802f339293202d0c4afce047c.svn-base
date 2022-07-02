@@ -1,0 +1,55 @@
+#include <string.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include "utils.h"
+
+int compare_words(char* first_word, char* second_word) {
+    return strcmp(first_word, second_word);
+}
+
+char *read_line(FILE *file, int read_chunk) {
+  int  chunk_size = read_chunk;
+  int character_position = 0;
+  char *line = malloc(read_chunk);
+  int ch;
+  while ((ch = fgetc(file)) != '\n') {
+    if(ch == EOF) {
+        return NULL; // indicate we are done reading
+    }
+    line[character_position++] = ch;
+    if (character_position == chunk_size) {
+      chunk_size += read_chunk;
+      line = realloc(line, chunk_size);
+    }
+  }
+  line[character_position] = 0;
+
+  return line;
+}
+
+DictionaryWords *dict_words_init() {
+    DictionaryWords* dict = (DictionaryWords*) malloc(sizeof(DictionaryWords));
+    dict->words = (char**) malloc(sizeof(char*));
+    dict->size = 0;
+    dict->memsize = sizeof(char*);
+
+    return dict;
+}
+
+void dict_words_add(DictionaryWords *dict, char *word) {
+    dict->words[dict->size] = word;
+    int new_size = dict->memsize + sizeof(char*);
+    dict->memsize = new_size;
+    dict->words = (char**) realloc(dict->words, new_size);
+    dict->size++;
+}
+
+void dict_words_free(DictionaryWords *dict) {
+    for(int i = 0; i < dict->size; i++) {
+        free(dict->words[i]); // free the memory allocated for each word
+    }
+
+    free(dict->words);
+    free(dict);
+    dict = NULL;
+}

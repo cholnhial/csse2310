@@ -1,0 +1,28 @@
+#ifndef NETUTILS_H_
+#define NETUTILS_H_
+#include <unistd.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <string.h>
+#include <netinet/in.h>
+#include <sys/types.h>
+#include <strings.h>
+
+
+
+/**
+ *
+ * Connects to any TCP server with specified host and port
+ *
+ * Params:
+ *  hostname - the ip address/hostname to connect to
+ *  port - the port number on the host machine to connect to
+ *
+ * NOTE: This was developed with help from Beej's Guide to Network Programming
+ *
+ *  Returns: -1 on failure or a valid socket file descriptor on success
+ *
+ * */
+int connect_to_tcp_server(char* hostname, char* port);
+#endif 
+

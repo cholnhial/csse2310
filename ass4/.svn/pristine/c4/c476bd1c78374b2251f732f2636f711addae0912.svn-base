@@ -1,0 +1,55 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+#include "utils.h"
+#include "netutils.h"
+
+
+/**
+ * 
+ * Checks whether the file exists or can be read.
+ * Exits with an error code indicating failure.
+ *
+ * Returns nothing
+ * 
+ * Note: code from assignment 1
+ * */
+void exit_on_incorrect_file_access(char* filename) {
+
+    /* Check if file exists and if we can read */
+    int returnValue = access(filename, F_OK | R_OK);
+
+    if (returnValue == -1) {
+        print_usage(stderr, "Usage: server authfile [port]\n", EXIT_FAILURE);
+
+    }
+}
+
+void handle_client(int clientSocketFd) {
+    int readFd = dup(clientSocketFd);
+    printf("Serving client...\n");
+    FILE* socketWrite = fdopen(clientSocketFd, "w");
+    FILE* socketRead = fdopen(readFd, "r");
+
+    fprintf(socketWrite, "What's your name:\n");
+    fflush(socketWrite);
+    char* name = read_line(socketRead, 30);
+    fprintf(socketWrite, "Hello, %s\n", name);
+    fflush(socketWrite);
+}
+
+int main(int argc, char** argv) {
+   
+    if (argc < 2) {
+        print_usage(stderr, "Usage: server authfile [port]\n", EXIT_FAILURE);
+    }
+
+    // Program will end if authfile cannot be read
+    exit_on_incorrect_file_access(argv[1]);
+    
+    char* authSecret = read_auth_secret(argv[1]); 
+    tcp_server(argv[2] ? argv[2] : "-1", &handle_client, true);
+
+    exit(EXIT_SUCCESS);
+}

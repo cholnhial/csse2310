@@ -1,0 +1,31 @@
+#include <stdio.h>
+#include <stdlib.h>
+
+#include "common.h"
+#include "utils.h"
+
+/**
+ * 
+ * Checks whether the file exists or can be read.
+ * Exits with an error code indicating failure.
+ *
+ * Returns nothing
+ * 
+ * Note: code from assignment 1
+ * */
+void exit_on_incorrect_file_access(char *filename) {
+
+    /* Check if file exists and if we can read */
+    int returnValue = access(filename, F_OK | R_OK);
+
+    if (returnValue == -1) {
+        print_usage(stderr, "Usage: clientbot responsefile\n", EXIT_FAILURE);
+
+    }
+}
+
+int main(int argc, char** argv) {
+
+
+    exit(EXIT_SUCCESS);
+}

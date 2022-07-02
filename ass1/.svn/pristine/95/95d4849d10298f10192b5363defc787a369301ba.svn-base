@@ -1,0 +1,27 @@
+#ifndef UTILS_H_
+#define UTILS_H_
+
+
+/** 
+ *  Uses strcmp to compare which word comes first in the alphabetical order
+ * Parameters:
+ *  first_word - a string representing the first word
+ *  second_word - a string representing the second word
+ * Returns: an int 0 if the words have equal order 
+ */
+int compare_words(char *first_word, char *second_word);
+
+/**
+ *
+ * Reads a line from a file, making sure to allocate enough
+ * memory for it. For efficiency reasons you can control
+ * the size of memory allocation chunks
+ * 
+ * Parameters:
+ * file - the file to read from
+ * read_chunks - The number of bytes to allocate at a time 
+ * Returns the line read from the file
+ * 
+ **/
+char *read_line(FILE *file, int read_chunk);
+#endif

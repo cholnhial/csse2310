@@ -1,0 +1,414 @@
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#include <stdio.h>
+#include <sys/socket.h>
+#include <stdarg.h>
+
+#include "utils.h"
+
+LinkedList* linked_list_new(void) {
+    LinkedList* list = (LinkedList*) malloc(sizeof(LinkedList));
+    list->head = NULL;
+    list->size = 0;
+    pthread_mutex_init(&list->mutex, NULL);
+
+    return list;
+}
+
+
+LinkedList* linked_list_add_item(LinkedList* list, void* item) {
+   
+    pthread_mutex_lock(&list->mutex);
+
+    if (list->head == NULL) {
+        list->head = (LinkedListNode*) malloc(sizeof(LinkedListNode));
+        list->head->item = item;
+        list->head->next = NULL;
+        list->head->previous = NULL;
+    } else {
+        
+        LinkedListNode* current = list->head;
+
+        while (current->next != NULL)
+            current = current->next;
+        
+        // Make the link 
+        LinkedListNode* newNode = (LinkedListNode*) malloc(sizeof(LinkedListNode));
+        memset(newNode, 0, sizeof(LinkedListNode));
+        newNode->item = item;
+        newNode->next = current->next;
+        
+        current->next = newNode;
+        newNode->previous = current;
+
+
+    }
+    list->size++;
+
+    pthread_mutex_unlock(&list->mutex);
+
+    return list;
+}
+
+LinkedList* linked_list_add_item_sorted(LinkedList* list, void* item,
+        int (*compare_callback)(void* a, void* b)) {
+    pthread_mutex_lock(&list->mutex);
+    if (list->head == NULL) {
+        list->head = (LinkedListNode*) malloc(sizeof(LinkedListNode));
+        list->head->item = item;
+        list->head->next = NULL;
+        list->head->previous = NULL;
+    } else if(compare_callback(list->head->item, item) >= 0) {
+        // If the new node should be inserted at the beginning 
+        // of the doubly linked list
+        LinkedListNode* newNode = 
+            (LinkedListNode*) malloc(sizeof(LinkedListNode));
+        memset(newNode, 0, sizeof(LinkedListNode));
+        newNode->item = item;
+        newNode->next = list->head;
+        newNode->next->previous = newNode;
+        list->head = newNode;
+    } else {
+        LinkedListNode* current = list->head;
+        // Locate the node where the new node is to be inserted in front of
+        while (current->next != NULL && 
+                compare_callback(current->next->item, item) < 0)
+            current = current->next;
+        // Make the link 
+        LinkedListNode* newNode = 
+            (LinkedListNode*) malloc(sizeof(LinkedListNode));
+        memset(newNode, 0, sizeof(LinkedListNode));
+        newNode->item = item;
+        newNode->next = current->next;
+        
+        // If the new node was not inserted at the end 
+        if (current->next != NULL) {
+            newNode->next->previous = newNode;
+        }
+        
+        current->next = newNode;
+        newNode->previous = current;
+    }
+
+    list->size++;
+
+    pthread_mutex_unlock(&list->mutex);
+
+    return list;
+}
+
+
+
+LinkedList* linked_list_remove_item(LinkedList* list, void* item) {
+   
+    pthread_mutex_lock(&list->mutex);
+
+    if (list->head != NULL && item != NULL) {
+        LinkedListNode* current = list->head;
+        
+        // Find the element to be removed
+        while (current->next != NULL && current->item != item) 
+            current = current->next;
+
+        if(current == NULL) {
+            printf("It's NULL\n");
+        }
+
+        if (list->head == current) {
+            list->head = current->next;
+        }
+        if (current->next != NULL) {
+            current->next->previous = current->previous;
+        }
+        if (current->previous != NULL) {
+            current->previous->next = current->next;
+        }
+        
+        free(current);
+        
+        list->size--;
+    }
+
+    pthread_mutex_unlock(&list->mutex);
+   
+    return list;
+}
+
+void linked_list_print(LinkedList* list, FILE* stream, char* formatString) {
+    LinkedListNode* current = list->head;
+
+    while(current != NULL) {
+        fprintf(stream, formatString, current->item);
+        current = current->next;
+    }
+}
+
+void linked_list_free(LinkedList* list) {
+    if (list == NULL) { 
+        return;
+    };
+
+    if (list->head != NULL) {
+        LinkedListNode* current = list->head;
+        while (current->next != NULL) {
+            LinkedListNode* toBeFreed = current;
+            current = current->next;
+            free(toBeFreed);
+            toBeFreed = NULL;
+        }
+    }
+    free(list);
+    list = NULL;
+}
+
+char* read_line(FILE* file, int readChunk) {
+    if (file == NULL) {
+        return NULL;
+    }
+    int chunkSize = readChunk;
+    int characterPosition = 0;
+    char* line = malloc(readChunk);
+    int charRead;
+    while ((charRead = fgetc(file)) != '\n') {
+        if (charRead == EOF) {
+            if (characterPosition > 0) {
+                line[characterPosition] = 0;
+                return line;
+            }
+            return NULL; // indicate we are done reading
+        }
+        line[characterPosition++] = charRead;   
+        
+        if (characterPosition == chunkSize) {
+            chunkSize += readChunk;
+            line = realloc(line, chunkSize);
+            if (line == NULL) {
+                printf("Problem!\n");
+                exit(0);
+            }
+        }
+        fflush(file);
+    }
+   
+    line[characterPosition] = 0;
+
+    return line;
+}
+
+ParsedMessage* parse_message(char* message) {
+    if (message == NULL) {
+        return NULL;
+    }
+    /* To prevent message passed in from being modified */
+    char* copy = (char*) malloc(strlen(message) + 1);
+    if (copy == NULL) {
+        return NULL;
+    }
+    strncpy(copy, message, strlen(message));
+    copy[strlen(message)] = 0;
+
+    if (strstr(copy, ":") == NULL) {
+        free(copy);
+        return NULL;
+    }
+
+    ParsedMessage* parsedMessage = 
+            (ParsedMessage*) malloc(sizeof(ParsedMessage));
+    parsedMessage->size = 0;
+    parsedMessage->argsMemSize = sizeof(char*);
+    parsedMessage->arguments = (char**) malloc(sizeof(char*));
+   
+    char* restOfCopy  = copy;
+
+    char* token = strtok_r(copy, ":", &restOfCopy);
+
+    while (token != NULL) {
+        parsedMessage->arguments[parsedMessage->size] =
+                (char*) malloc(strlen(token) + 1);
+        strncpy(parsedMessage->arguments[parsedMessage->size],
+                token, strlen(token));
+        parsedMessage->arguments[parsedMessage->size][strlen(token)] = 0;
+
+        int argsNewMemSize = parsedMessage->argsMemSize + sizeof(char*);
+        parsedMessage->argsMemSize = argsNewMemSize;
+        parsedMessage->arguments = (char**) realloc(parsedMessage->arguments,
+                argsNewMemSize);
+        parsedMessage->size++;
+        if (parsedMessage->arguments == NULL) {
+            printf("Problem!\n");
+            exit(0);
+        }
+
+        token = strtok_r(NULL, ":", &restOfCopy);
+    }
+
+    parsedMessage->command = parsedMessage->arguments[0];
+    free(copy);
+    return parsedMessage;
+}
+
+void free_parsed_message(ParsedMessage* parsedMessage) {
+    if (parsedMessage->arguments != NULL) {
+        free(parsedMessage->arguments);
+    }
+}
+
+int send_all(int s, char* buf, int *len)
+{
+    int total = 0; // how many bytes we've sent
+    int bytesleft = *len; // how many we have left to send
+    int n;
+    while (total < *len) {
+        n = send(s, buf+total, bytesleft, 0);
+        if (n == -1) {
+            break;
+        }
+        total += n;
+        bytesleft -= n;
+    }
+    *len = total; // return number actually sent here
+    return n==-1?-1:0; // return -1 on failure, 0 on success
+}
+
+/**
+ *
+ * Helper function to get the length of a sprintf format string
+ * It ignores special characters %s and \escaped
+ *
+ * Params:
+ * format - the format string to get the length of
+ *
+ * Returns: The length excluding special chars
+ * */
+static int get_format_length_ignore(char* format) {
+ int length = 0;
+   for (int i = 0; i < strlen(format); i++) {
+        if (format[i] != '%' && format[i] != '\\') {
+            length++;
+        } else {
+            if (format[i] == '\\') {
+                length++;
+            }
+            i++;
+        }
+    }
+    
+   return length;
+}
+
+int socket_fprintf(FILE* stream, char* format, ...) {
+    va_list paramList;
+    printf("Called!\n");
+    va_start(paramList, format);
+    va_list paramListCopy;
+    va_copy(paramListCopy, paramList);
+    int needed = vsnprintf(NULL, 0, format, paramList) + 1;
+    char  *buffer = malloc(needed);
+    vsprintf(buffer, format, paramListCopy);
+    int length = MAX_SEND_BUFFER;
+    int ret = send_all(fileno(stream), buffer, &length);
+    free(buffer);
+    fflush(stream);
+    va_end(paramListCopy);
+    return ret;
+}
+
+char* socket_fgets(FILE* stream) {
+    if (feof(stream)) {
+        return NULL;
+    }
+
+    char* buffer = (char*) malloc(MAX_SEND_BUFFER);
+    int totalRead = 0;
+    int nRead = MAX_SEND_BUFFER;
+    int ret = recv_all(fileno(stream), buffer, &nRead);
+    totalRead += ret;
+    if (ret < MAX_SEND_BUFFER) {
+        // that's all
+        buffer[ret - 1] = 0;
+        return buffer;
+    }
+    while(ret != -1 && ret != 0) {
+        // read more 
+        char* readBuffer = (char*) malloc(MAX_SEND_BUFFER);
+        nRead = MAX_SEND_BUFFER;
+        ret = recv_all(fileno(stream), readBuffer, &nRead);
+        if (ret > 0) {
+            //readBuffer[ret - 1] = 0;
+            int lastPos = totalRead;
+            totalRead += ret;
+            buffer = realloc(buffer, totalRead);
+            memcpy(buffer + lastPos, readBuffer, ret); 
+        }
+        free(readBuffer);
+        if(ret < MAX_SEND_BUFFER) {
+            // last chunk
+            break;
+        }
+    }
+    return buffer;
+}
+
+
+void u_fprintf(FILE* stream, char* format, ...) {
+    va_list ap;
+    va_start(ap, format);
+    va_list apCopy;
+    va_copy(apCopy, ap);
+    int needed = vsnprintf(NULL, 0, format, ap) + 1;
+    char  *buffer = malloc(needed);
+    vsprintf(buffer,format, apCopy);
+    va_end(ap);
+    va_end(apCopy);
+    for(int i = 0; i < strlen(buffer); i++) {
+        putc(buffer[i], stream);
+    }
+    free(buffer);
+    fflush(stream);
+}
+
+int recv_all(int s, char* buf,int *len)
+{
+// the workbuffer for storing currently received buffer
+    char workbuffer[*len];
+// Holds the number of received bytes */
+    int total = 0;
+    // Holds the number of sent bytes
+    int n;
+    //holds the number of bytes left to received
+    int bytesleft = *len;
+    while (total < *len)
+    {
+        // recv and append to workbuffer
+        n = recv(s,workbuffer+total,bytesleft,0);
+        if (n == -1 || n == 0) {
+            break;
+        }
+
+        // increment total by the number of received bytes
+        total += n;
+        bytesleft -= n;
+
+        if (n < *len) {
+            break;
+        }
+    }
+    // Copy workbuffer to to buf
+    memcpy(buf,workbuffer,sizeof(workbuffer));
+    switch(n)
+    {
+      case -1:
+	return -1;
+      break;
+      case 0:
+	return 0;
+      break;
+      default:
+	return total;
+    }
+}
+
+
+
+

@@ -1,0 +1,18 @@
+CFLAGS = -g -pedantic -Wall --std=gnu99
+COMMON_OBJECTS = utils.o
+CLIENT_OBJECTS = client.o
+CLIENT_TARGET = client
+
+CC = gcc
+LD = $(CC)
+
+$(CLIENT_TARGET): $(CLIENT_OBJECTS) $(COMMON_OBJECTS)
+	$(LD) -o $@ $^
+
+%.o: %.c
+	$(CC) -c $(CFLAGS) -o $@ $^
+clean:
+	rm $(CLIENT_TARGET) *.o 
+
+.PHONY: all clean
+

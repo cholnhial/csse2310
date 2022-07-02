@@ -1,0 +1,48 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <getopt.h>
+
+
+/* Enum representing program search type */
+enum SearchType {
+    PREFIX, EXACT,ANYWHERE
+};
+
+/* A structure that represents the program options */
+typedef struct {
+    enum SearchType search_type;
+    char* pattern;
+    char* dictionary_filename;
+} Options;
+
+void print_usage(FILE *stream, int exit_code) {
+    fprintf(stream, "Usage: search [-exact|-prefix|-anywhere] [-sort] pattern [filename]\n");
+    exit(exit_code);
+}
+
+/**
+ * parse_options()
+ *
+ * Parses the command-line options and construct a Options struct
+ * or the options are not valid.
+ *
+ * Params:
+ * - argc a integer representing the number of args 
+ * - argv an arrary of options as strings
+ * Returns: A valid Option* or
+ *
+ * */
+Options* parse_options(int argc, char **argv) {
+    if ((argc - 1) < 3) {
+        return NULL; 
+    }
+}
+
+
+int main(int argc, char **argv) {
+   
+    Options *options = parse_options(argc, argv);
+    if (!options) {
+        print_usage(stderr, EXIT_FAILURE);
+    }
+}

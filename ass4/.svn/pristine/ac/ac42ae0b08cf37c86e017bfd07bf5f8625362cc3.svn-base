@@ -1,0 +1,351 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <strings.h>
+#include <unistd.h>
+#include <pthread.h>
+
+#include "utils.h"
+#include "common.h"
+#include "netutils.h"
+
+
+/* The last command sent to client */
+char lastCommand[COMMAND_SIZE];
+
+/* Whether the client needs to use a different name */
+bool isNameTaken = false;
+
+/* Whether the initial WHO/NAME negotiation is complete */
+bool handShakeComplete = false;
+
+bool authenticationComplete = false;
+
+/* Stores the name of a client */
+char clientName[NAME_SIZE];
+
+/* Tracks the next number to append to name */
+int nameCounter = 0;
+
+static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/** 
+ *
+ * Exits with communication error code 
+ *
+ * Returns: None
+ * */ 
+void terminate_on_communication_error() {
+    fprintf(stderr, "Communications error\n");
+    exit(EXIT_COMMUNICATION_ERROR);
+}
+
+/**
+ * Exits with authentication error code
+ *
+ * Returns: None
+ * */
+void terminate_on_authentication_error() {
+    fprintf(stderr, "Authentication error\n");
+    exit(EXIT_AUTHENTICATION_ERROR);
+}
+
+/* Contains information used by connecting thread */
+typedef struct {
+    char* authSecret;
+    char* name;
+    char* port;
+    FILE* socketWrite;
+    FILE* socketRead;
+} ServerConfig;
+
+/* Holds the thread ids for the two client threads */
+pthread_t thread_ids[2];
+
+/**
+ * 
+ * Checks whether the file exists or can be read.
+ * Exits with an error code indicating failure.
+ *
+ * Returns nothing
+ * 
+ * Note: code from assignment 1
+ * */
+void exit_on_incorrect_file_access(char* filename) {
+
+    /* Check if file exists and if we can read */
+    int returnValue = access(filename, F_OK | R_OK);
+
+    if (returnValue == -1) {
+        print_usage(stderr, "Usage: client name authfile port\n", EXIT_FAILURE);
+
+    }
+}
+
+void print_usage(FILE* file, char* message, int exitCode) {
+    fprintf(file, message);
+
+    exit(exitCode);
+}
+
+
+/**
+ *
+ *  Reads authentication secret from auth file
+ *  
+ *  Paramaters:
+ *   filename - The file to read authentication info from
+ *
+ *   Returns: the authentication secret
+ *
+ *   Note: code adapted from assignment 3
+ *
+ * */
+char* read_auth_secret(char* filename) {
+
+    FILE* file = fopen(filename, "r");
+    return  read_line(file, READ_MEM_ALLOCATION_CHUNK);
+}
+
+/**
+ * 
+ * Performs the name negotiation between server
+ *
+ * Params:
+ *  parsedMessage - the parsed message containing name negotiation command
+ *  serverConfig - the server config info
+ * 
+ * Returns: None
+ * */
+void process_handshake_messages(ParsedMessage* parsedMessage, 
+        ServerConfig* serverConfig) {
+
+    if (!strcmp(parsedMessage->command, "WHO")) {
+        if (!isNameTaken) {
+            fprintf(serverConfig->socketWrite,"NAME:%s\n", serverConfig->name);
+            fflush(serverConfig->socketWrite);
+            pthread_mutex_lock(&mutex);
+            sprintf(clientName, "%s", serverConfig->name);
+            pthread_mutex_unlock(&mutex);
+        } else {
+            fprintf(serverConfig->socketWrite,"NAME:%s%d\n", serverConfig->name, nameCounter);
+            fflush(serverConfig->socketWrite);
+            pthread_mutex_lock(&mutex);
+            sprintf(clientName, "%s%d", serverConfig->name, nameCounter); 
+            pthread_mutex_unlock(&mutex);
+        }
+    }
+
+    if (!strcmp(parsedMessage->command, "NAME_TAKEN")) {
+        if (isNameTaken) {
+            nameCounter++;
+        }
+        isNameTaken = true;
+    }
+
+    if (!strcmp(parsedMessage->command, "OK")) {
+            handShakeComplete = true;
+    }
+
+}
+
+
+
+/**
+ *  
+ *  Attempts to authenticate with server, if it fails the application stops
+ *  Params:
+ *      parsedMessage - the parsed command
+ *      serverConfig - server configuration to reply back to
+ *  Returns: None 
+ **/
+void authenticate_with_server(ParsedMessage* parsedMessage, ServerConfig* serverConfig) {
+
+    if (!strcmp(parsedMessage->command, "AUTH")) {
+        fprintf(serverConfig->socketWrite, "AUTH: %s\n", serverConfig->authSecret);
+        fflush(serverConfig->socketWrite);
+    }
+
+    if (!strcmp(lastCommand, "AUTH") && !strcmp(parsedMessage->command, "OK")) {
+        authenticationComplete = true;
+    }
+}
+
+/**
+ * Checks whether a command can be received before handshake is complete.
+ *
+ * Returns: True if it's a valid command false otherwise
+ * */
+bool is_valid_pre_handshake_command(char* command) {
+    if (!strcmp(command, "WHO")
+            || !strcmp(command, "OK")
+            || !strcmp(command, "AUTH")
+            || !strcmp(command, "NAME_TAKEN")) {
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ *
+ *  Processes the message recevied from the server
+ *
+ *  Parameters:
+ *      parsedMessage - Contains the command and its arguments
+ *      serverConfig - the server's config
+ *
+ *  Returns: None
+ * */
+void process_message(ParsedMessage* parsedMessage,
+        ServerConfig* serverConfig) {
+
+    if (!(authenticationComplete && handShakeComplete) &&
+                !is_valid_pre_handshake_command(parsedMessage->command)) {
+            terminate_on_communication_error(); 
+    }
+
+    if (!authenticationComplete) {
+        authenticate_with_server(parsedMessage, serverConfig);
+    }
+
+    if (!handShakeComplete && authenticationComplete) {
+               // Negotiate a name
+        process_handshake_messages(parsedMessage, serverConfig);
+    } 
+
+    // Ready for general messages
+    if (!strcmp(parsedMessage->command, "OK") && handShakeComplete) {
+    }
+
+    if (!strcmp(parsedMessage->command, "MSG")) {
+        if (parsedMessage->arguments[2] == NULL || parsedMessage->size < 3) {
+            terminate_on_communication_error();
+        }
+        fprintf(stderr, "(%s) %s\n", parsedMessage->arguments[1],
+                parsedMessage->arguments[2]);
+    }
+
+    if (!strcmp(parsedMessage->command, "LEAVE")) {
+        if (parsedMessage->size < 2) {
+            terminate_on_communication_error();
+        }
+        fprintf(stdout, "(%s has left the chat)\n", parsedMessage->arguments[2]);
+    }
+
+    if (!strcmp(parsedMessage->command, "ENTER")) {
+        if (parsedMessage->size < 2) {
+            terminate_on_communication_error();
+        }
+        fprintf(stdout, "(%s has entered the chat)\n", parsedMessage->arguments[2]);
+    }
+
+    if (!strcmp(parsedMessage->command, "KICK")) {
+        fprintf(stderr, "Kicked\n");
+        exit(EXIT_KICKED);
+    }
+        
+    strncpy(lastCommand, parsedMessage->command, COMMAND_SIZE - 1);
+}
+
+
+/**
+ * A thread routine that handles communication between the client and server
+ * Params:
+ *  config - server config
+ * Returns: thread exit status 
+ * */
+void* server_thread(void* config) {
+    ServerConfig* serverConfig = (ServerConfig*) serverConfig; 
+    int socketFileDescriptor = connect_to_tcp_server("localhost",
+            serverConfig->port); 
+
+    if (socketFileDescriptor == -1) {
+        terminate_on_communication_error(); // other threads will be killed
+    }
+
+    pthread_mutex_lock(&mutex);
+    int readFd = dup(socketFileDescriptor);
+    serverConfig->socketWrite = fdopen(socketFileDescriptor, "w");
+    serverConfig->socketRead   = fdopen(readFd, "r");
+    pthread_mutex_unlock(&mutex);
+
+    char* message;
+    while (true) {
+        message = read_line(serverConfig->socketRead, READ_MEM_ALLOCATION_CHUNK);
+        ParsedMessage* parsedMessage = parse_message(message);
+        if (parsedMessage == NULL) {
+
+            if (authenticationComplete) {
+                terminate_on_communication_error();
+            } else {
+                terminate_on_authentication_error();           
+            }
+        }
+        process_message(parsedMessage, serverConfig);
+        free_parsed_message(parsedMessage);
+        free(message);
+    }
+    pthread_exit((void*) 0);
+}
+
+/** 
+ * 
+ * Reads input continously from user/program
+ *  data - not used 
+ *
+ * Returns: thread exit status
+ * 
+ * */
+void* input_thread(void *data) {
+  
+    char* message = NULL;
+
+    while (true) {
+        message = read_line(stdin, READ_MEM_ALLOCATION_CHUNK);
+        if (message == NULL) {
+            terminate_on_communication_error();
+        }
+        // send to server
+        free(message);
+    } 
+    pthread_exit((void*) 0);
+}
+
+/**
+ *
+ * Waits for the threads for input and server
+ * * Returns: None
+ * */ 
+void wait_for_threads() {
+    for (int i = 0; i < 2; i++) {
+        pthread_join(thread_ids[i], NULL);
+    }
+}
+
+int main(int argc, char** argv) {
+    
+    if (argc < 3) {
+        print_usage(stderr, "Usage: client name authfile port\n", EXIT_FAILURE);
+    }
+
+    // Program will end if authfile cannot be read
+    exit_on_incorrect_file_access(argv[2]);
+    
+    char* authSecret = read_auth_secret(argv[2]); 
+   
+    ServerConfig serverConfig;
+    serverConfig.authSecret = authSecret;
+    serverConfig.name = argv[1];
+    serverConfig.port = argv[3];
+    
+    // launch thread to read from stdin
+    pthread_create(&thread_ids[0], NULL, input_thread, NULL);
+
+    //launch thread to connect to server
+    pthread_create(&thread_ids[1], NULL, server_thread, &serverConfig);
+
+    wait_for_threads();
+    
+    exit(EXIT_SUCCESS);
+}

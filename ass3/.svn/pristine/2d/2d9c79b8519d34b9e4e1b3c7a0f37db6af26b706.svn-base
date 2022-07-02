@@ -1,0 +1,26 @@
+#include <stdio.h>
+#include <stdlib.h>
+
+/**
+ * Prints the programs usage. 
+ * 
+ * Parameters:
+ *  file - The file to print to
+ *  exit_code - The exit code number to exit the program with
+ *
+ *  Returns: None
+ * */
+void print_usage(FILE* file, int exit_code) {
+    fprintf(file, "Usage: server configfile\n");
+
+    exit(exit_code);
+}
+
+int main(int argc, char** argv) {
+
+    if (argc < 2) {
+        print_usage(stderr, EXIT_FAILURE);
+    }
+
+    exit(EXIT_SUCCESS);
+}

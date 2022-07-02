@@ -1,0 +1,21 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <getopt.h>
+
+void print_usage(FILE* stream, int exit_code) {
+    fprintf(stream, "Usage: search [-exact|-prefix|-anywhere] [-sort] pattern [filename]\n");
+    exit(exit_code);
+}
+
+
+int main(int argc, char** argv) {
+
+    for(int i = 1; i < argc; i++) {
+       if(strcmp(argv[i], "-exact") == 0) {
+        
+       } else {
+           
+
+    }
+
+}

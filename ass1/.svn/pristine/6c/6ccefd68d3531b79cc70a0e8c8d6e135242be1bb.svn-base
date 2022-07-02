@@ -1,0 +1,64 @@
+#ifndef UTILS_H_
+#define UTILS_H_
+
+#include "common.h"
+
+
+/** 
+ *  Uses strcmp to compare which word comes first in the alphabetical order
+ * Parameters:
+ *  first_word - a string representing the first word
+ *  second_word - a string representing the second word
+ * Returns: an int 0 if the words have equal order 
+ */
+int compare_words(char *first_word, char *second_word);
+
+/**
+ *
+ * Reads a line from a file, making sure to allocate enough
+ * memory for it. For efficiency reasons you can control
+ * the size of memory allocation chunks
+ * 
+ * Parameters:
+ * file - the file to read from
+ * read_chunks - The number of bytes to allocate at a time 
+ * Returns the line read from the file
+ * 
+ **/
+char *read_line(FILE *file, int read_chunk);
+
+/**
+ * Initialises a new dictionary structure that will grow with words added to it.
+ *
+ * Parameters:
+ *  None
+ *
+ *  Returns a pointer to a structure containing the dictionary
+ *
+ * */
+DictionaryWords *dict_words_init();
+
+/**
+ *  Dynamically add a new word to the dictionary
+ * 
+ * Paramaters:
+ * word - the word to add
+ *
+ * Returns void, nada
+ * 
+ * */
+void dict_words_add(DictionaryWords *dict, char *word);
+
+/**
+ * Free all the memory resources used by the dictionary,
+ * including freeing the words. After this the dict pointer
+ * will be pointing to NULL
+ *
+ * Parameters:
+ * dict - The dictionary to free
+ *
+ * Returns absolutely nothing
+ * */
+void dict_words_free(DictionaryWords *dict);
+
+#endif

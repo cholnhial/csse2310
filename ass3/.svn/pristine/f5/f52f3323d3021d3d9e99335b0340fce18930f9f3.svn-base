@@ -1,0 +1,258 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+#include "common.h"
+#include "utils.h"
+
+/* A structure used to store each clients information and state */
+typedef struct {
+    char name[NAME_SIZE];
+    FILE* childWrite;
+    FILE* childRead;
+    int pipeFromChild[2];
+    int pipeToChild[2];
+    pid_t pid;
+    bool handShakeComplete;
+} Client;
+
+/* A structure used to track the clients talking with the server */
+typedef struct {
+    Client** clients;
+    int memorySize;
+    int size;
+} ClientsList;
+
+/* The list of clients that are talking with this server */
+ClientsList* clientsList;
+
+/**
+ * Initializes the clients list structure:
+ *
+ * Returns: a newly allocated ClientList, to be freed later when
+ * done with
+ * */
+ClientsList* clients_list_init() {
+    ClientsList* list = (ClientsList*) malloc(sizeof(ClientsList));
+    list->clients = (Client**) malloc(sizeof(Client*));
+    list->size = 0;
+    list->memorySize = sizeof(Client*);
+    return list;
+}
+
+/**
+ * Adds a client to the client list structure.
+ *
+ * Parameters:
+ *  list - the list to add the client to
+ *  client - the client to be added
+ *
+ *  Returns: None
+ * */
+void clients_list_add(ClientsList* list, Client* client) {
+    list->clients[list->size] = client;
+    int newSize = list->memorySize + sizeof(Client*);
+    list->memorySize = newSize;
+    list->clients = (Client**) realloc(list->clients, newSize);
+    list->size++;
+}
+
+/**
+ * Frees memory that has bee allocated toa ClientList* 
+ *
+ * Parameters:
+ *  list - the clients list to free
+ *
+ *  Returns: None
+ *
+ * */
+void clients_list_free(ClientsList* list) {
+    if (list->clients != NULL) {
+        free(list->clients);
+    }
+    if (list != NULL) {
+        free(list);
+        list = NULL;
+    }
+}
+
+/**
+ * 
+ * Checks whether the file exists or can be read.
+ * Exits with an error code indicating failure.
+ *
+ * Returns nothing
+ * 
+ * Note: code from assignment 1
+ * */
+void exit_on_incorrect_file_access(char *filename) {
+
+    /* Check if file exists and if we can read */
+    int returnValue = access(filename, F_OK | R_OK);
+
+    if (returnValue == -1) {
+        print_usage(stderr, "Usage: server configfile\n", EXIT_FAILURE);
+    }
+}
+
+
+/**
+ * Checks whether a line is a valid configuration line.
+ *
+ * Parameters:
+ *  line - the line to check
+ *
+ * Returns true if the line is valid or false otherwise.
+ * */
+bool is_valid_config_line(char* line) {
+    char* copy = (char*) malloc(strlen(line)+1);
+    strncpy(copy, line, strlen(line));
+    copy[strlen(line)] = 0;
+
+    if (strstr(copy, ":") == NULL) {
+        free(copy);
+        return false;
+    }
+
+    if (is_comment_line(line)) {
+        free(copy);
+        return false;
+    }
+
+    free(copy);
+
+    return true;
+}
+
+/**
+ *
+ *  Reads all the lines from a file and puts them into the structure.
+ *  The structure has the lines and how many there is for easy iteration.
+ *  
+ *  Paramaters:
+ *   filename - The file to read the lines from
+ *
+ *   Returns the struct containing the lines read
+ *
+ *   Note: code adapted from assignment 1
+ *
+ * */
+LinesList *read_lines_from_config_file(char *filename) {
+
+    FILE* file = fopen(filename, "r");
+
+    LinesList* list = lines_list_init();
+
+    char* line;
+    while ((line = read_line(file, READ_MEM_ALLOCATION_CHUNK))) {
+       if (is_valid_config_line(line)) {
+            lines_list_add(list, line);
+       }
+
+    }
+    return list;
+}
+
+/**
+ * 
+ * Launches the clients specified in the configuration.
+ *
+ * Parameters:
+ *  configLines - the lines containing a client command and chat file
+ *
+ *  Returns: None
+ * */
+void launch_clients_from_config(LinesList* configLines) {
+    
+    for (int i = 0; i < configLines->size; i++) {
+        ParsedMessage* config = parse_message(configLines->lines[i]);
+        Client* client = (Client*) malloc(sizeof(Client));
+
+        pipe(client->pipeToChild);
+        pipe(client->pipeFromChild);
+        client->handShakeComplete = false;    
+        client->pid = fork();
+
+        /* In the client if == 0 */
+        if (client->pid == 0) {
+            close(client->pipeToChild[1]); // Write end not needed
+            close(client->pipeFromChild[0]); // Read end not needed
+
+            dup2(client->pipeToChild[0], 0); // Read input from parent
+            close(client->pipeToChild[0]); 
+            dup2(client->pipeFromChild[1], 1); // Write output to parent
+            close(client->pipeFromChild[1]);
+            execlp(config->command, config->command, config->arguments[1], NULL);
+        } else {
+       
+            close(client->pipeToChild[0]); 
+            close(client->pipeFromChild[1]);
+
+            client->childWrite = fdopen(client->pipeToChild[1], "w");
+            client->childRead = fdopen(client->pipeFromChild[0], "r");
+        }
+
+        clients_list_add(clientsList, client);
+    }
+
+}
+
+
+/**
+ * Checks whether all clients in the list have been all successfully
+ * negotiated a name (HANDSHAKE).
+ * 
+ * 
+ * Returns: True if negotiation for names is complete for all clients
+ * false otherwise.
+ * */
+bool all_clients_handshakes_complete() {
+    for(int i = 0; i < clientsList->size; i++) {
+        if (!clientsList->clients[i]->handShakeComplete) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+void chat_loop() {
+
+    /* Negotiate Names */
+    do {
+        
+        for (int i = 0; i < clientsList->size; i++) {
+            fprintf(clientsList->clients[i]->childWrite, "WHO:\n");
+            fflush(clientsList->clients[i]->childWrite);
+
+            /* Read response */
+            char* response = read_line(clientsList->clients[i]->childRead, READ_MEM_ALLOCATION_CHUNK);    
+            printf("CLIENT: %s\n", response);
+        }
+
+    } while(!all_clients_handshakes_complete());
+}
+
+
+int main(int argc, char** argv) {
+    
+    LinesList* configLines;
+
+    if (argc < 2) {
+        print_usage(stderr,"Usage: server configfile\n", EXIT_FAILURE);
+    }
+
+
+    // Program will end if config file cannot be read
+    exit_on_incorrect_file_access(argv[1]);
+    
+    configLines = read_lines_from_config_file(argv[1]);
+    clientsList = clients_list_init();
+    launch_clients_from_config(configLines);
+    chat_loop();
+
+
+
+    exit(EXIT_SUCCESS);
+}

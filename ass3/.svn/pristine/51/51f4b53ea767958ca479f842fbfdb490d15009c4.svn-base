@@ -1,0 +1,180 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <unistd.h>
+#include <string.h>
+
+#include "utils.h"
+
+/* Default client name */
+#define DEFAULT_CLIENT_NAME "client"
+
+/* Default memory chunk allocation for read_line() */
+#define READ_MEM_ALLOCATION_CHUNK 30
+
+/* The size of a single command */
+#define COMMAND_SIZE 32
+
+/* Tracks the next number to append to name */
+int nameCounter = 0;
+
+/* Whether the client needs to use a different name */
+bool isNameTaken = false;
+
+/* Whether the initial WHO/NAME negotiation is complete */
+bool handShakeComplete = false;
+
+/* The last command sent to client */
+char lastCommand[32];
+
+/* Points to the next message the client needs to send */
+int nextMessage = 0;
+
+/* Holds the messages the client will need to emit */
+MessagesList* messagesList;
+
+/**
+ * 
+ * Checks whether the file exists or can be read.
+ * Exits with an error code indicating failure.
+ *
+ * Returns nothing
+ * 
+ * Note: code from assignment 1
+ * */
+void exit_on_incorrect_file_access(char *filename) {
+
+    /* Check if file exists and if we can read */
+    int returnValue = access(filename, F_OK | R_OK);
+
+    if (returnValue == -1) {
+        print_usage(stderr, "Usage: client chatscript\n", EXIT_FAILURE);
+
+    }
+}
+
+/**
+ *
+ *  Reads all the messages from a file and puts them into the structure.
+ *  The structure has the messages and how many there is for easy iteration.
+ *  
+ *  Paramaters:
+ *   filename - The file to read the words from
+ *
+ *   Returns the dictionary words 
+ *
+ *   Note: code adapted from assignment 1
+ *
+ * */
+MessagesList *read_messages_from_file(char *filename) {
+
+    FILE* file = fopen(filename, "r");
+
+    MessagesList* list = messages_list_init();
+
+    char* message;
+    while ((message = read_line(file, READ_MEM_ALLOCATION_CHUNK))) {
+        messages_list_add(list, message);
+    }
+    return list;
+}
+
+
+/**
+ * Sends the next message to the server.
+ *
+ * Returns: None
+ * */
+void send_next_message() {
+    if (nextMessage < messagesList->size) {
+        printf("%s\n", messagesList->messages[nextMessage]);
+        nextMessage++;
+    }
+}
+
+/**
+ * A sub process to process the WHO/NAME negotiation.
+ *
+ * Parameters: 
+ *  parsedMessage - Contains the command and its arguments
+ *
+ *  Returns: None
+ * */
+void process_handshake_messages(ParsedMessage* parsedMessage) {
+
+    if (!strcmp(parsedMessage->command, "WHO")) {
+        if (!isNameTaken) {
+            printf("NAME:%s\n", DEFAULT_CLIENT_NAME);
+        } else {
+            printf("NAME:%s%d\n", DEFAULT_CLIENT_NAME, nameCounter);
+        }
+    }
+
+    if (!strcmp(parsedMessage->command, "NAME_TAKEN")) {
+        if(isNameTaken) {
+            nameCounter++;
+        }
+        isNameTaken = true;
+    }
+
+    if (!strcmp(parsedMessage->command, "YT")) {
+        if (!strcmp(lastCommand, "WHO")) {
+            handShakeComplete = true;
+            send_next_message();
+        }
+    }
+
+}
+
+
+/**
+ *
+ *  Processes the message recevied from the server
+ *
+ *  Parameters:
+ *      parsedMessage - Contains the command and its arguments
+ *
+ *  Returns: None
+ * */
+void process_message(ParsedMessage* parsedMessage) {
+
+    if (!handShakeComplete) {
+        // Negotiate a name
+        process_handshake_messages(parsedMessage);
+    } else{
+        // Ready for general messages
+        if (!strcmp(parsedMessage->command, "YT")) {
+            send_next_message();
+        }
+
+        if (!strcmp(parsedMessage->command, "MSG")) {
+            
+            fprintf(stderr, "(%s) %s\n", parsedMessage->arguments[1], parsedMessage->arguments[2]);
+        }
+        
+    }
+    strncpy(lastCommand, parsedMessage->command, COMMAND_SIZE - 1);
+}
+
+int main(int argc, char** argv) {
+
+    if (argc < 2) {
+        print_usage(stderr, "Usage: client chatscript\n", EXIT_FAILURE);
+    }
+
+    // Program will end if chatscript cannot be read
+    exit_on_incorrect_file_access(argv[1]);
+    
+    messagesList = read_messages_from_file(argv[1]);
+
+    char* message;
+
+    while (true) {
+        message = read_line(stdin, READ_MEM_ALLOCATION_CHUNK);
+        ParsedMessage* parsedMessage = parse_message(message);
+        process_message(parsedMessage);
+        free_parsed_message(parsedMessage);
+    }
+    
+    exit(EXIT_SUCCESS);
+}

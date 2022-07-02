@@ -1,0 +1,41 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <getopt.h>
+
+typedef enum { 
+    PREFIX, 
+    EXACT, 
+    ANYWHERE 
+} search_type_t;
+
+typedef struct {
+    search_type_t search_type;
+    char* pattern;
+    char* dictionary_filename;
+} options_t;
+
+void print_usage(FILE* stream, int exit_code) {
+    fprintf(stream, "Usage: search [-exact|-prefix|-anywhere] [-sort] pattern [filename]\n");
+    exit(exit_code);
+}
+
+/**
+ * parse_options()
+ *
+ * Parses the command-line options and construct a options_t object
+ * or the options are not valid.
+ *
+ * Params:
+ * - argc a integer representing the number of args 
+ * - argv an arrary of options as strings
+ * Returns: A valid option_t* or
+ *
+ * */
+options_t* parse_options(int argc, char** argv) {
+    
+}
+
+
+int main(int argc, char** argv) {
+    
+}

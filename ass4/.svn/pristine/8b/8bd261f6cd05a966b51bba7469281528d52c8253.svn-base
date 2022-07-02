@@ -1,0 +1,145 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <pthread.h>
+
+#include "utils.h"
+#include "netutils.h"
+
+
+/* Holds the information representing a single client */
+typedef struct {
+    char* name;
+    int clientSocket;
+    FILE* socketWrite;
+    FILE* socketRead;
+    int sayMessages;
+    int listMessages;
+    int kickMessages;
+    
+} Client;
+
+/* Holds information for server stats to be displayed on SIGHUP */
+typedef struct {
+    int authMessages;
+    int nameMessages;
+    int sayMessages;
+    int kickMessages;
+    int listMessages;
+    int leaveMessage;
+    char* authSecret;
+    bool noAuthentication;
+} Server;
+
+/* Holds list of clients server is communicating with */
+LinkedList* clients_list;
+
+/* Holds sever info */
+Server* server;
+
+/* To prevent concurrent updates */
+static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Forward declarations */
+void* serve_client(void* clientInfo);
+
+/**
+ * 
+ * Checks whether the file exists or can be read.
+ * Exits with an error code indicating failure.
+ *
+ * Returns nothing
+ * 
+ * Note: code from assignment 1
+ * */
+void exit_on_incorrect_file_access(char* filename) {
+
+    /* Check if file exists and if we can read */
+    int returnValue = access(filename, F_OK | R_OK);
+
+    if (returnValue == -1) {
+        print_usage(stderr, "Usage: server authfile [port]\n", EXIT_FAILURE);
+
+    }
+}
+
+int compare_client_names(void* clientA, void* clientB) {
+    Client* firstClient = (Client*) clientA;
+    Client* secondClient = (Client*) clientB;
+
+    return strcmp(firstClient->name, secondClient->name);
+}
+
+void handle_client(int clientSocketFd) {
+    int readFd = dup(clientSocketFd);
+    FILE* socketWrite = fdopen(clientSocketFd, "w");
+    FILE* socketRead = fdopen(readFd, "r");
+    Client* client = (Client*) malloc(sizeof(Client));
+    client->socketWrite = socketWrite;
+    client->socketRead = socketRead;
+    client->listMessages = 0;
+    client->sayMessages = 0;
+    client->kickMessages = 0;
+    
+    pthread_t tid;
+    pthread_create(&tid, NULL, &serve_client, client);
+}
+
+bool authenticate_client(Client* client) {
+    fprintf(client->socketWrite, "AUTH:\n");
+    fflush(client->socketWrite);
+    char* clientAuthSecret = read_line(client->socketRead,
+            READ_MEM_ALLOCATION_CHUNK);
+    if (clientAuthSecret == NULL) {
+        return false;
+    }
+
+    if (!strcmp(clientAuthSecret, server->authSecret)) {
+        return true;
+    }
+
+    return false;
+}
+
+void* serve_client(void* clientInfo) {
+    Client* client = (Client*) clientInfo;
+    
+    // Authenticate
+    if (!server->noAuthentication) {
+        if (!authenticate_client(client)) {
+            close(client->clientSocket);
+            pthread_exit((void*) 0);
+        }
+    }
+
+    // Perform name negotiation 
+    
+
+    // Add to list
+    linked_list_add_item_sorted(clients_list, client, &compare_client_names);
+    // Serve Loop
+    
+}
+
+
+
+int main(int argc, char** argv) {
+   
+    if (argc < 2) {
+        print_usage(stderr, "Usage: server authfile [port]\n", EXIT_FAILURE);
+    }
+
+    // Program will end if authfile cannot be read
+    exit_on_incorrect_file_access(argv[1]);
+    clients_list = linked_list_new();
+    memset(server, 0, sizeof(Server));
+    char* authSecret = read_auth_secret(argv[1]); 
+    if(strlen(authSecret) == 0) {
+        pthread_mutex_lock(&mutex);
+        server->noAuthentication = true;
+        pthread_mutex_unlock(&mutex);
+    }
+    tcp_server(argv[2] ? argv[2] : "-1", &handle_client, true);
+
+    exit(EXIT_SUCCESS);
+}

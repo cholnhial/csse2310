@@ -1,0 +1,22 @@
+#ifndef COMMON_H_
+#define COMMON_H_
+
+/* A structure that holds messages */
+typedef struct {
+    char **messages;
+    int size;
+    int memsize;
+} MessagesList;
+
+typedef struct {
+    char* command;
+    char** arguments;
+    int size;
+    int argsMemSize;
+} ParsedMessage;
+
+
+
+
+
+#endif

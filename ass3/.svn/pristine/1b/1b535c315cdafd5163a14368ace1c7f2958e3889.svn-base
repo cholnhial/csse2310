@@ -1,0 +1,22 @@
+#ifndef COMMON_H_
+#define COMMON_H_
+
+/* A structure that holds lines */
+typedef struct {
+    char **lines;
+    int size;
+    int memsize;
+} LinesList;
+
+typedef struct {
+    char* command;
+    char** arguments;
+    int size;
+    int argsMemSize;
+} ParsedMessage;
+
+
+
+
+
+#endif

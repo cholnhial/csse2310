@@ -1,0 +1,15 @@
+#include <string.h>
+#include "util.h"
+
+/** 
+ * compare_words()
+ *
+ *  Uses strcmp to compare which word comes first in the alphabetical order
+ * Parameters:
+ *  first_word - a string representing the first word
+ *  second_word - a string representing the second word
+ * returns: an int 0 if the words have equal order 
+ **/
+int compare_words(char* first_word, char* second_word) {
+    return strcmp(first_word, second_word);
+}

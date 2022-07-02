@@ -1,0 +1,313 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <unistd.h>
+#include <string.h>
+
+#include "utils.h"
+
+/* Default client name */
+#define DEFAULT_CLIENT_NAME "client"
+
+/* Default memory chunk allocation for read_line() */
+#define READ_MEM_ALLOCATION_CHUNK 30
+
+/* The size of a single command */
+#define COMMAND_SIZE 32
+
+/* The size of the name of a client */
+#define NAME_SIZE 64
+
+/* The exit code when the client is kicked */
+#define EXIT_KICKED 3
+
+/* The exit code when the client has a communication error */
+#define EXIT_COMMUNICATION_ERROR 2
+
+/* Tracks the next number to append to name */
+int nameCounter = 0;
+
+/* Whether the client needs to use a different name */
+bool isNameTaken = false;
+
+/* Whether the initial WHO/NAME negotiation is complete */
+bool handShakeComplete = false;
+
+/* The last command sent to client */
+char lastCommand[COMMAND_SIZE];
+
+/* Points to the next message the client needs to send */
+int nextMessage = 0;
+
+/* Holds the messages the client will need to emit */
+MessagesList* messagesList;
+
+/* Stores the name of a client */
+char clientName[NAME_SIZE];
+
+/* Whether all messages in chat YT have been sent */
+bool chatDone = false;
+
+/**
+ * 
+ * Checks whether the file exists or can be read.
+ * Exits with an error code indicating failure.
+ *
+ * Returns nothing
+ * 
+ * Note: code from assignment 1
+ * */
+void exit_on_incorrect_file_access(char *filename) {
+
+    /* Check if file exists and if we can read */
+    int returnValue = access(filename, F_OK | R_OK);
+
+    if (returnValue == -1) {
+        print_usage(stderr, "Usage: client chatscript\n", EXIT_FAILURE);
+
+    }
+}
+
+/**
+ *
+ *  Reads all the messages from a file and puts them into the structure.
+ *  The structure has the messages and how many there is for easy iteration.
+ *  
+ *  Paramaters:
+ *   filename - The file to read the messages from
+ *
+ *   Returns the struct containing the messages read
+ *
+ *   Note: code adapted from assignment 1
+ *
+ * */
+MessagesList *read_messages_from_file(char *filename) {
+
+    FILE* file = fopen(filename, "r");
+
+    MessagesList* list = messages_list_init();
+
+    char* message;
+    while ((message = read_line(file, READ_MEM_ALLOCATION_CHUNK))) {
+        messages_list_add(list, message);
+    }
+    return list;
+}
+
+
+/**
+ * 
+ * Validate a chatscript line
+ * 
+ * Parameters:
+ *  message - the line to validate
+ * Returns: True if valid false otherwise
+ *
+ * */
+bool is_invalid_chatscript_line(char* message) {
+
+    if (strstr(message, ":") == NULL) {
+        return true;
+    }
+    char* messageToParse = (char*) malloc(strlen(message)+1);
+    strncpy(messageToParse, message, strlen(message));
+    ParsedMessage* parsedMessage = parse_message(messageToParse);
+
+    if (!strcmp(parsedMessage->command, "CHAT")) {
+        free(messageToParse);
+        free(parsedMessage);
+        return false;
+    }
+    else if(!strcmp(parsedMessage->command, "DONE")) {
+        free(parsedMessage);
+        free(messageToParse);
+        return false;
+    }
+    else if(!strcmp(parsedMessage->command, "QUIT")) {
+        free(parsedMessage);
+        free(messageToParse);
+        return false;
+    } 
+    else {
+        free(messageToParse);
+        free(parsedMessage);
+        return true;
+    }
+
+}
+
+/**
+ * Sends the next message to the server.
+ *
+ * Returns: None
+ * */
+void send_next_message() {
+    
+    if (nextMessage < messagesList->size) {
+        
+        // Skip all bad lines until we reach a good line
+        while (is_invalid_chatscript_line(messagesList->messages[nextMessage])) {
+            nextMessage++;
+        }
+
+        char* message = (char*) malloc(strlen(messagesList->messages[nextMessage])+1);
+        strncpy(message, messagesList->messages[nextMessage], 
+                 strlen(messagesList->messages[nextMessage]));
+        ParsedMessage* parsedMessage = parse_message(message);
+
+        printf("%s\n", messagesList->messages[nextMessage]);
+
+        if (!strcmp(parsedMessage->command, "QUIT")) {
+            messages_list_free(messagesList);
+            free(message);
+            exit(EXIT_SUCCESS);
+        }
+
+        if (!strcmp(parsedMessage->command, "DONE")) {
+            chatDone = true;
+        }
+        
+        free(message);
+        free(parsedMessage);
+        nextMessage++;
+    } else {
+        chatDone = true;
+    }
+}
+
+/**
+ * A sub process to process the WHO/NAME negotiation.
+ *
+ * Parameters: 
+ *  parsedMessage - Contains the command and its arguments
+ *
+ *  Returns: None
+ * */
+void process_handshake_messages(ParsedMessage* parsedMessage) {
+
+    if (!strcmp(parsedMessage->command, "WHO")) {
+        if (!isNameTaken) {
+            printf("NAME:%s\n", DEFAULT_CLIENT_NAME);
+            sprintf(clientName, "%s", DEFAULT_CLIENT_NAME);
+        } else {
+            printf("NAME:%s%d\n", DEFAULT_CLIENT_NAME, nameCounter);
+            sprintf(clientName, "%s%d", DEFAULT_CLIENT_NAME, nameCounter); 
+        }
+    }
+
+    if (!strcmp(parsedMessage->command, "NAME_TAKEN")) {
+        if(isNameTaken) {
+            nameCounter++;
+        }
+        isNameTaken = true;
+    }
+
+    if (!strcmp(parsedMessage->command, "YT")) {
+        if (!handShakeComplete) {
+            handShakeComplete = true;
+            chatDone = false;
+            do {
+                send_next_message();
+            } while(!chatDone);
+        }
+    }
+
+}
+
+
+/** 
+ *
+ * Exits with communication error code 
+ *
+ * Returns: None
+ * */
+void terminate_on_communication_error() {
+    fprintf(stderr, "Communications error\n");
+    exit(EXIT_COMMUNICATION_ERROR);
+}
+
+/**
+ * Checks whether a command can be received before handshake is complete.
+ *
+ * Returns: True if it's a valid command false otherwise
+ * */
+bool is_valid_pre_handshake_command(char* command) {
+    if(!strcmp(command, "MSG")) {
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ *
+ *  Processes the message recevied from the server
+ *
+ *  Parameters:
+ *      parsedMessage - Contains the command and its arguments
+ *
+ *  Returns: None
+ * */
+void process_message(ParsedMessage* parsedMessage) {
+
+    if (!handShakeComplete) {
+        // Negotiate a name
+        process_handshake_messages(parsedMessage);
+    } else {
+        if (!is_valid_pre_handshake_command(parsedMessage->command)) {
+            terminate_on_communication_error(); 
+        }
+    }
+
+    // Ready for general messages
+    if (!strcmp(parsedMessage->command, "YT")) {
+        chatDone = false;
+        do {
+            send_next_message();
+        } while(!chatDone);
+    }
+
+    if (!strcmp(parsedMessage->command, "MSG")) {
+        fprintf(stderr, "(%s) %s\n", parsedMessage->arguments[1], parsedMessage->arguments[2]);
+    }
+
+    if (!strcmp(parsedMessage->command, "LEFT")) {
+        fprintf(stderr, "(%s has left the chat)\n", clientName);
+    }
+
+    if (!strcmp(parsedMessage->command, "KICK")) {
+        if (!strcmp(parsedMessage->arguments[1], clientName)) {
+            messages_list_free(messagesList);
+            exit(EXIT_KICKED);
+        }
+    }
+        
+    strncpy(lastCommand, parsedMessage->command, COMMAND_SIZE - 1);
+}
+
+int main(int argc, char** argv) {
+
+    if (argc < 2) {
+        print_usage(stderr, "Usage: client chatscript\n", EXIT_FAILURE);
+    }
+
+    // Program will end if chatscript cannot be read
+    exit_on_incorrect_file_access(argv[1]);
+    
+    messagesList = read_messages_from_file(argv[1]);
+
+    char* message;
+
+    while (true) {
+        message = read_line(stdin, READ_MEM_ALLOCATION_CHUNK);
+        ParsedMessage* parsedMessage = parse_message(message);
+        if (parsedMessage == NULL) {
+            terminate_on_communication_error();
+        }
+        process_message(parsedMessage);
+        free_parsed_message(parsedMessage);
+        free(message);
+    }
+    
+    exit(EXIT_SUCCESS);
+}

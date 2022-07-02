@@ -1,0 +1,104 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+#include "common.h"
+#include "utils.h"
+
+
+/**
+ * 
+ * Checks whether the file exists or can be read.
+ * Exits with an error code indicating failure.
+ *
+ * Returns nothing
+ * 
+ * Note: code from assignment 1
+ * */
+void exit_on_incorrect_file_access(char *filename) {
+
+    /* Check if file exists and if we can read */
+    int returnValue = access(filename, F_OK | R_OK);
+
+    if (returnValue == -1) {
+        print_usage(stderr, "Usage: server configfile\n", EXIT_FAILURE);
+    }
+}
+
+
+/**
+ * Checks whether a line is a valid configuration line.
+ *
+ * Parameters:
+ *  line - the line to check
+ *
+ * Returns true if the line is valid or false otherwise.
+ * */
+bool is_valid_config_line(char* line) {
+    char* copy = (char*) malloc(strlen(line)+1);
+    strncpy(copy, line, strlen(line));
+    copy[strlen(line)] = 0;
+
+    if (strstr(copy, ":") == NULL) {
+        free(copy);
+        return false;
+    }
+
+    if (is_comment_line(line)) {
+        free(copy);
+        return false;
+    }
+
+    free(copy);
+
+    return true;
+}
+
+/**
+ *
+ *  Reads all the lines from a file and puts them into the structure.
+ *  The structure has the lines and how many there is for easy iteration.
+ *  
+ *  Paramaters:
+ *   filename - The file to read the lines from
+ *
+ *   Returns the struct containing the lines read
+ *
+ *   Note: code adapted from assignment 1
+ *
+ * */
+LinesList *read_lines_from_config_file(char *filename) {
+
+    FILE* file = fopen(filename, "r");
+
+    LinesList* list = lines_list_init();
+
+    char* line;
+    while ((line = read_line(file, READ_MEM_ALLOCATION_CHUNK))) {
+       if (is_valid_config_line(line)) {
+            lines_list_add(list, line);
+       }
+
+    }
+    return list;
+}
+
+int main(int argc, char** argv) {
+    
+    LinesList* configLines;
+
+    if (argc < 2) {
+        print_usage(stderr,"Usage: server configfile\n", EXIT_FAILURE);
+    }
+
+
+    // Program will end if config file cannot be read
+    exit_on_incorrect_file_access(argv[1]);
+    
+    configLines = read_lines_from_config_file(argv[1]);
+
+
+
+    exit(EXIT_SUCCESS);
+}

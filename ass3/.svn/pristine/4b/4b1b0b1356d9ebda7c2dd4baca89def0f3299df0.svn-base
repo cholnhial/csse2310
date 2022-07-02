@@ -1,0 +1,84 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <stdbool.h>
+#include <unistd.h>
+
+#include "utils.h"
+
+/* Default client name */
+#define NAME "client"
+
+/* Default memory chunk allocation for read_line() */
+#define READ_MEM_ALLOCATION_CHUNK 30
+
+int nameCounter = 0;
+
+/**
+ * 
+ * Checks whether the file exists or can be read.
+ * Exits with an error code indicating failure.
+ *
+ * Returns nothing
+ * 
+ * Note: code from assignment 1
+ * */
+void exit_on_incorrect_file_access(char *filename) {
+
+    /* Check if file exists and if we can read */
+    int returnValue = access(filename, F_OK | R_OK);
+
+    if (returnValue == -1) {
+        print_usage(stderr, "Usage: client chatscript\n", EXIT_FAILURE);
+
+    }
+}
+
+/**
+ *
+ *  Reads all the messages from a file and puts them into the structure.
+ *  The structure has the messages and how many there is for easy iteration.
+ *  
+ *  Paramaters:
+ *   filename - The file to read the words from
+ *
+ *   Returns the dictionary words 
+ *
+ *   Note: code adapted from assignment 1
+ *
+ * */
+MessagesList *read_messages_from_file(char *filename) {
+
+    FILE* file = fopen(filename, "r");
+
+    MessagesList* list = messages_list_init();
+
+    char* message;
+    while ((message = read_line(file, READ_MEM_ALLOCATION_CHUNK))) {
+        messages_list_add(list, message);
+    }
+    return list;
+}
+
+int main(int argc, char** argv) {
+
+    if (argc < 2) {
+        print_usage(stderr, "Usage: client chatscript\n", EXIT_FAILURE);
+    }
+
+    // Program will end if chatscript cannot be read
+    exit_on_incorrect_file_access(argv[1]);
+    
+    MessagesList* messagesList = read_messages_from_file(argv[1]);
+
+    char* message;
+
+    while (true) {
+        message = read_line(stdin, READ_MEM_ALLOCATION_CHUNK);
+        ParsedMessage* parsedMessage = parse_message(message);
+        printf("Command: %s, Paylod: %s\n", parsedMessage->command, parsedMessage->arguments[1]);
+
+        free_parsed_message(parsedMessage);
+    }
+    
+    exit(EXIT_SUCCESS);
+}

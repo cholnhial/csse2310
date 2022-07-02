@@ -1,0 +1,30 @@
+CFLAGS = -g -pedantic -Wall --std=gnu99
+COMMON_OBJECTS = utils.o common.o
+CLIENT_OBJECTS = client.o
+CLIENTBOT_OBJECTS = clientbot.o
+CLIENT_TARGET = client
+CLIENTBOT_TARGET = clientbot
+SERVER_TARGET = server
+SERVER_OBJECTS = server.o
+
+all: $(CLIENTBOT_TARGET) $(CLIENT_TARGET) $(SERVER_TARGET)
+
+CC = gcc
+LD = $(CC)
+
+$(CLIENT_TARGET): $(CLIENT_OBJECTS) $(COMMON_OBJECTS)
+	$(LD) -o $@ $^
+
+$(CLIENTBOT_TARGET): $(CLIENTBOT_OBJECTS) $(COMMON_OBJECTS)
+	$(LD) -o $@ $^
+
+$(SERVER_TARGET): $(SERVER_OBJECTS) $(COMMON_OBJECTS)
+	$(LD) -o $@ $^
+
+%.o: %.c
+	$(CC) -c $(CFLAGS) -o $@ $^
+clean:
+	rm $(CLIENT_TARGET) $(CLIENTBOT_TARGET) *.o 
+
+.PHONY: all clean
+

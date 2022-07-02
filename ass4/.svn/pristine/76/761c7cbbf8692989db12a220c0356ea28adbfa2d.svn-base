@@ -1,0 +1,40 @@
+#include "netutils.h"
+
+int connect_to_tcp_server(char* hostname, char* port) {
+    int socketFileDescriptor;
+    struct addrinfo hints;
+    struct addrinfo* serverInfo;
+    struct addrinfo* currentServerInfo;
+
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC; // use either Ipv4 or Ipv6
+    hints.ai_socktype = SOCK_STREAM; // TCP
+    
+    if (getaddrinfo(hostname, port, &hints, &serverInfo) != 0) {
+        return -1;
+    }
+
+    for (currentServerInfo = serverInfo; currentServerInfo != NULL; 
+            currentServerInfo = currentServerInfo->ai_next) {
+    
+        if ((socketFileDescriptor = socket(currentServerInfo->ai_family,
+                        currentServerInfo->ai_socktype,
+                        currentServerInfo->ai_protocol)) == -1) {
+            continue; // try again
+        }
+
+        if (connect(socketFileDescriptor, currentServerInfo->ai_addr,
+                    currentServerInfo->ai_addrlen) == -1) {
+            continue; // try again
+        }
+    
+        break; // break on first success
+    }
+
+    if (currentServerInfo == NULL) {
+        return -1; // We never connected
+    }
+
+    return socketFileDescriptor;
+}
+

@@ -1,0 +1,220 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <getopt.h>
+#include <stdbool.h>
+#include <string.h>
+#include <unistd.h>
+
+/* Enum representing program search type */
+typedef enum {
+    SEARCH_PREFIX, SEARCH_EXACT, SEARCH_ANYWHERE, BAD_OPTION, SORT_OPTION
+} OptionType;
+
+/* A structure that represents the program options */
+typedef struct {
+    OptionType search_type;
+    bool sort;
+    char* pattern;
+    char* dictionary_filename;
+} Options;
+
+/**
+ * Prints the program usage and exits with a specified error code.
+ *
+ * Params:
+ *  stream - The file stream to output the usage message to
+ *  exit_code - The exit code which to exit with and terminate execution
+ *
+ *  Returns: nothing
+ */
+void print_usage(FILE *stream, int exit_code) {
+    fprintf(stream, "Usage: search [-exact|-prefix|-anywhere] [-sort] pattern [filename]\n");
+    exit(exit_code);
+}
+
+/**
+ * Checks whether a command-line argument is an options.
+ *
+ * Parameters:
+ *  argument - The argument string to check if it starts with "-"
+ *
+ *  Returns: true if it's an option, false otherwise.
+ */
+bool is_argument_an_option(char* argument) {
+    if (strstr(argument, "-") != NULL) {
+        return true;
+    }
+
+    return false;
+}
+
+/**
+ * Maps a command-line option to its type.
+ *
+ * BAD_OPTION is returned if it's an option not expected.
+ *
+ * Parameters:
+ *  option - The command line argument to check
+ *
+ *  Returns an OptionType enum
+ *
+ * */
+OptionType get_option_type(char* option) {
+
+    if (!strcmp(option, "-exact")) {
+        return SEARCH_EXACT;         
+    } else if (!strcmp(option, "-prefix")) {
+        return SEARCH_PREFIX;
+    } else if (!strcmp(option, "-anywhere")) {
+        return SEARCH_ANYWHERE;
+    } else if(!strcmp(option, "-sort")) {
+        return SORT_OPTION; 
+    } else {
+        return BAD_OPTION;
+    }
+}
+
+/**
+ * Constructs an options struct that represents the command-line options passed.
+ *
+ * Paramaters:
+ * argc - The total number of arguments passed to the program
+ * argv - The list of arguments
+ *
+ * Returns NULL or a valid Options structure
+ **/
+Options* parse_options(int argc, char **argv) {
+
+    if ((argc - 1) < 1) {
+        return NULL; 
+    }
+
+    Options *options = (Options*) malloc(sizeof(Options)); 
+    memset(options, 0, sizeof(Options));
+
+    bool search_exact_found = false;
+    bool search_prefix_found = false;
+    bool search_anywhere_found = false;
+    bool is_sort_specified = false;
+    int pattern_index = -1;
+    int filename_index = -1;
+    int non_option_arguments_found = 0;
+
+    /* Process command-line options*/
+    for(int i = 1; i < argc; i++) {
+
+        /* Is argument an option */
+        if (is_argument_an_option(argv[i])) {
+
+        OptionType search_type = get_option_type(argv[i]);
+
+            switch (search_type) {
+
+                case SEARCH_EXACT:
+                    if (!search_exact_found) {
+                        search_exact_found = true;
+                    } else {
+                        print_usage(stderr, EXIT_FAILURE);
+                    }
+                    break;
+                case SEARCH_PREFIX:
+                    if (!search_prefix_found) {
+                        search_prefix_found = true;
+                    } else {
+                        print_usage(stderr, EXIT_FAILURE);
+                    }
+                    break;
+                case SEARCH_ANYWHERE:
+                    if (!search_anywhere_found) {
+                        search_anywhere_found = true;
+                    } else {
+                        print_usage(stderr, EXIT_FAILURE);
+                    } 
+                    break;
+                case SORT_OPTION:
+                    if (!is_sort_specified) {
+                        is_sort_specified = true;
+                    } else {
+                        print_usage(stderr, EXIT_FAILURE);
+                    }
+
+                    break;
+                default:
+                    print_usage(stderr, EXIT_FAILURE);
+
+            }
+
+
+        } else {
+            non_option_arguments_found++;
+
+            /*This is either a pattern or a file */
+            if (pattern_index == -1) {
+                pattern_index = i;
+            }
+
+            /* After a pattern we expect a file*/
+            if (pattern_index != -1 && filename_index == -1 && pattern_index != i) {
+                filename_index = i;
+            }
+        }
+    }
+    
+    if (non_option_arguments_found > 2) {
+        print_usage(stderr, EXIT_FAILURE);
+    }
+
+    if (search_exact_found && !(search_prefix_found || search_anywhere_found)) {
+        options->search_type = SEARCH_EXACT;
+
+    } else if (search_prefix_found && !(search_exact_found || search_anywhere_found)) {
+        options->search_type  = SEARCH_PREFIX;
+    } else if (search_anywhere_found && !(search_exact_found || search_prefix_found)) {
+        options->search_type = SEARCH_ANYWHERE;
+    } else {
+        options->search_type = SEARCH_EXACT;
+    }
+
+    options->sort = is_sort_specified;
+
+    if (pattern_index != -1) {
+        options->pattern = argv[pattern_index];
+    } 
+    
+    if (filename_index != -1) {
+        options->dictionary_filename = argv[filename_index];
+    }
+    return options;
+}
+
+
+/**
+ * 
+ * Checks whether the file exists or can be read.
+ * Exits with an error code indicating failure.
+ *
+ * Returns nothing
+ *
+ * */
+void exit_on_incorrect_file_access(char* filename) {
+  
+    /* Check if file exists and if we can read */
+    int ret = access(filename, F_OK | R_OK);
+
+    if (ret == -1) {
+        fprintf(stderr, "search: \"%s\" can not be opened\n", filename);
+        exit(EXIT_FAILURE);
+    }
+}
+
+int main(int argc, char **argv) {
+
+    Options *options = parse_options(argc, argv);
+    if (!options) {
+        print_usage(stderr, EXIT_FAILURE);
+    } else {
+        if (options->dictionary_filename) {
+            exit_on_incorrect_file_access(options->dictionary_filename);
+        }
+    }
+}

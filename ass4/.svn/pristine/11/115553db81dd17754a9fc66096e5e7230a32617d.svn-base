@@ -1,0 +1,341 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <sys/socket.h>
+#include <string.h>
+#include <strings.h>
+#include <sys/signal.h>
+
+#include "utils.h"
+#include "netutils.h"
+
+
+/* Holds the information representing a single client */
+typedef struct {
+    char* name;
+    int clientSocket;
+    FILE* socketWrite;
+    FILE* socketRead;
+    int sayMessages;
+    int listMessages;
+    int kickMessages;
+    
+} Client;
+
+/* Holds information for server stats to be displayed on SIGHUP */
+typedef struct {
+    int authMessages;
+    int nameMessages;
+    int sayMessages;
+    int kickMessages;
+    int listMessages;
+    int leaveMessage;
+    char* authSecret;
+    bool noAuthentication;
+} Server;
+
+/* Holds list of clients server is communicating with */
+LinkedList* clientsList;
+
+/* Holds sever info */
+Server* server;
+
+/* To prevent concurrent updates */
+static pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
+
+/* Forward declarations */
+void* serve_client(void* clientInfo);
+
+
+void debug_list() {
+    printf("Debugging List: \n");
+
+    for(LinkedListNode* current = clientsList->head; current != NULL; current = current->next) {
+        printf("Item: %s\n", ((Client*) current->item)->name);
+    }
+    printf("Debug complete\n");
+}
+/**
+ * 
+ * Checks whether the file exists or can be read.
+ * Exits with an error code indicating failure.
+ *
+ * Returns nothing
+ * 
+ * Note: code from assignment 1
+ * */
+void exit_on_incorrect_file_access(char* filename) {
+
+    /* Check if file exists and if we can read */
+    int returnValue = access(filename, F_OK | R_OK);
+
+    if (returnValue == -1) {
+        print_usage(stderr, "Usage: server authfile [port]\n", EXIT_FAILURE);
+
+    }
+}
+
+int compare_client_names(void* clientA, void* clientB) {
+    Client* firstClient = (Client*) clientA;
+    Client* secondClient = (Client*) clientB;
+    return strcmp(firstClient->name, secondClient->name);
+}
+
+void handle_client(int clientSocketFd) {
+    int readFd = dup(clientSocketFd);
+    FILE* socketWrite = fdopen(clientSocketFd, "w");
+    FILE* socketRead = fdopen(readFd, "r");
+    Client* client = (Client*) malloc(sizeof(Client));
+    client->socketWrite = socketWrite;
+    client->socketRead = socketRead;
+    client->clientSocket = clientSocketFd;
+    client->listMessages = 0;
+    client->sayMessages = 0;
+    client->kickMessages = 0;
+    
+    pthread_t tid;
+    pthread_create(&tid, NULL, &serve_client, client);
+}
+
+bool authenticate_client(Client* client) {
+    fprintf(client->socketWrite, "AUTH:\n");
+    fflush(client->socketWrite);
+    char* message = read_line(client->socketRead,
+            READ_MEM_ALLOCATION_CHUNK);
+    ParsedMessage* parsedMessage = parse_message(message);
+    if (parsedMessage == NULL || 
+            !strcmp(parsedMessage->command, "AUTH") == false) {
+        return false;
+    }
+
+    if (!strcmp(parsedMessage->arguments[1], server->authSecret)) {
+        fprintf(client->socketWrite, "OK:\n");
+        fflush(client->socketWrite);
+        free(message);
+        free_parsed_message(parsedMessage);
+        return true;
+    }
+
+    return false;
+}
+
+bool is_name_taken(char* name) {
+    for (LinkedListNode* current = clientsList->head;
+            current != NULL; current = current->next) {
+        if(!strcmp(((Client*) current->item)->name, name)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool negotiate_client_name(Client* client) {
+    
+    while(!feof(client->socketRead)) {
+        fprintf(client->socketWrite, "WHO:\n");
+        fflush(client->socketWrite);
+        char* message = read_line(client->socketRead, READ_MEM_ALLOCATION_CHUNK);
+        ParsedMessage* parsedMessage = parse_message(message);
+        if (parsedMessage == NULL || 
+                !strcmp(parsedMessage->command, "NAME") == false ||
+                parsedMessage->arguments[1] == NULL) {
+            return false;
+        }
+   
+        if (!is_name_taken(parsedMessage->arguments[1])) {
+            client->name = 
+                (char*) malloc(strlen(parsedMessage->arguments[1]) + 1);
+            strncpy(client->name, parsedMessage->arguments[1],
+                    strlen(parsedMessage->arguments[1]));
+            client->name[strlen(parsedMessage->arguments[1])] = 0;
+            fprintf(client->socketWrite, "OK:\n");
+            fflush(client->socketWrite);
+            free(parsedMessage);
+            free(message);
+            return true;
+        } else {
+            fprintf(client->socketWrite, "NAME_TAKEN:\n");
+            fflush(client->socketWrite);
+        }
+
+        free_parsed_message(parsedMessage);
+        free(message);
+    }
+
+    return false;
+}
+
+void execute_a_kick(ParsedMessage* parsedMessage) {
+    for(LinkedListNode* current = clientsList->head;
+            current != NULL; current = current->next) {
+        Client* client = (Client*) current->item;
+        if (!strcmp(client->name, parsedMessage->arguments[1])) {
+            fprintf(client->socketWrite,"KICK:\n");
+            fflush(client->socketWrite);
+            /* The thread will receive a EOF and will terminate
+             * the client. It's a gamble */
+        }
+    }
+}
+
+void broadcast_message(Client* sender, char* message) {
+    for(LinkedListNode* current = clientsList->head;
+            current != NULL; current = current->next) {
+        Client* client = (Client*) current->item;
+        fprintf(client->socketWrite,"MSG:%s:%s\n", sender->name, message);
+        fflush(client->socketWrite);
+    }
+}
+
+void broadcast_entry(Client* newClient) {
+    for(LinkedListNode* current = clientsList->head;
+            current != NULL; current = current->next) {
+        Client* client = (Client*) current->item;
+        fprintf(client->socketWrite,"ENTER:%s\n", newClient->name);
+        fflush(client->socketWrite);
+    }
+}
+
+void broadcast_leave(Client* leavingClient) {
+    for(LinkedListNode* current = clientsList->head;
+            current != NULL; current = current->next) {
+        Client* client = (Client*) current->item;
+        fprintf(client->socketWrite,"LEAVE:%s\n", leavingClient->name);
+        fflush(client->socketWrite);
+ 
+    }
+}
+
+char* build_clients_list() {
+    LinkedListNode* current = clientsList->head;
+    char* list = NULL;
+
+    if (current) {
+        Client* client = (Client*) current->item;
+        if (clientsList->size == 1) {
+            return client->name;
+        }
+        int nextSize = strlen(client->name) + 1; // +1 for comma
+        int chunkSize = nextSize;
+        list = malloc(nextSize);
+        strcpy(list, "");
+        for(; current != NULL; current = current->next) {
+            
+            if (current->next != NULL) {
+                sprintf(list, "%s%s,", list, client->name);
+                LinkedListNode* next = current->next;
+                client = (Client*) next->item;
+                nextSize = strlen(client->name) + 1; // +1 for comma or \0
+                chunkSize += nextSize;
+                list = realloc(list, chunkSize);
+            } else {
+                sprintf(list, "%s%s", list, client->name);
+            }
+            
+        }
+    }
+
+    return list;
+}
+
+void handle_client_message(Client* client,
+        ParsedMessage* parsedMessage) {
+
+    if (!strcmp(parsedMessage->command, "SAY")) {
+        if (parsedMessage->arguments[1] != NULL) {
+            broadcast_message(client, parsedMessage->arguments[1]);
+        }
+    }
+
+    if (!strcmp(parsedMessage->command, "KICK")) {
+        if(parsedMessage->arguments[1] != NULL) {
+            execute_a_kick(parsedMessage);
+        }
+    }
+
+    if (!strcmp(parsedMessage->command, "LIST")) {
+        char* list = build_clients_list();
+       fprintf(client->socketWrite, "LIST:%s\n", list);
+       fflush(client->socketWrite);
+       free(list);
+    }
+
+    if (!strcmp(parsedMessage->command, "LEAVE")) {
+        linked_list_remove_item(clientsList, client);
+        shutdown(client->clientSocket, SHUT_RDWR);
+        broadcast_leave(client);
+        free(client->name);
+        free(client);
+    }
+}
+
+void* serve_client(void* clientInfo) {
+    Client* client = (Client*) clientInfo;
+    
+    // Authenticate
+    if (!server->noAuthentication) {
+        if (!authenticate_client(client)) {
+            shutdown(client->clientSocket, SHUT_RDWR);
+            pthread_exit((void*) EXIT_FAILURE);
+        }
+    }
+
+    // Perform name negotiation 
+    if (negotiate_client_name(client)) {
+        linked_list_add_item_sorted(clientsList, client, &compare_client_names);
+        broadcast_entry(client);
+    } else {
+        // name negotiation failed/client disconnected
+        shutdown(client->clientSocket, SHUT_RDWR);
+        free(client);
+        pthread_exit((void*) EXIT_FAILURE);
+    }
+
+    // Serve Loop
+   while (!feof(client->socketRead)) {
+    char* message = read_line(client->socketRead, READ_MEM_ALLOCATION_CHUNK);
+    ParsedMessage* parsedMessage = parse_message(message);
+    if (parsedMessage == NULL) {
+        break;
+    }
+    handle_client_message(client, parsedMessage);
+    free(message);
+    free_parsed_message(parsedMessage);
+   }
+
+    // clean up client
+    shutdown(client->clientSocket, SHUT_RDWR);
+    linked_list_remove_item(clientsList, client);
+    broadcast_leave(client);
+    free(client->name);
+    free(client);
+}
+
+
+
+int main(int argc, char** argv) {
+    // Ignore SIGPIPE signal
+    signal(SIGPIPE, SIG_IGN);
+
+    if (argc < 2) {
+        print_usage(stderr, "Usage: server authfile [port]\n", EXIT_FAILURE);
+    }
+
+    // Program will end if authfile cannot be read
+    exit_on_incorrect_file_access(argv[1]);
+    clientsList = linked_list_new();
+    server = (Server*) malloc(sizeof(Server));
+    memset(server, 0, sizeof(Server));
+    char* authSecret = read_auth_secret(argv[1]); 
+    server->authSecret = authSecret;
+    if(strlen(authSecret) == 0) {
+        pthread_mutex_lock(&mutex);
+        server->noAuthentication = true;
+        pthread_mutex_unlock(&mutex);
+    }
+    tcp_server(argv[2] ? argv[2] : "-1", &handle_client, true);
+
+    exit(EXIT_SUCCESS);
+}
